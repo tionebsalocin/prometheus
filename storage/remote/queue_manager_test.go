@@ -598,7 +598,6 @@ func TestCalculateDesiredShards(t *testing.T) {
 	inputRate := int64(50000)
 
 	// Two minute startup, no samples are sent.
-	m.startedAt = time.Now().Add(-2 * time.Minute)
 	for ts := time.Duration(0); ts < 120*time.Second; ts += shardUpdateDuration {
 		samplesIn.incr(inputRate * int64(shardUpdateDuration/time.Second))
 		samplesIn.tick()
