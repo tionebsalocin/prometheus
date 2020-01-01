@@ -982,14 +982,6 @@ func (w *Writer) Close() error {
 	return w.f.close()
 }
 
-// StringTuples provides access to a sorted list of string tuples.
-type StringTuples interface {
-	// Total number of tuples in the list.
-	Len() int
-	// At returns the tuple at position i.
-	At(i int) (string, error)
-}
-
 // StringIter iterates over a sorted list of strings.
 type StringIter interface {
 	// Next advances the iterator and returns true if another value was found.
@@ -1392,13 +1384,13 @@ func (r *Reader) SymbolTableSize() uint64 {
 // LabelValues returns value tuples that exist for the given label name tuples.
 // It is not safe to use the return value beyond the lifetime of the byte slice
 // passed into the Reader.
-func (r *Reader) LabelValues(name string) (StringTuples, error) {
+func (r *Reader) LabelValues(name string) ([]string, error) {
 	e, ok := r.postings[name]
 	if !ok {
-		return emptyStringTuples{}, nil
+		return nil, nil
 	}
 	if len(e) == 0 {
-		return emptyStringTuples{}, nil
+		return nil, nil
 	}
 	values := make([]string, 0, len(e)*symbolFactor)
 
@@ -1428,13 +1420,8 @@ func (r *Reader) LabelValues(name string) (StringTuples, error) {
 	if d.Err() != nil {
 		return nil, errors.Wrap(d.Err(), "get postings offset entry")
 	}
-	return NewStringTuples(values)
+	return values, nil
 }
-
-type emptyStringTuples struct{}
-
-func (emptyStringTuples) At(i int) (string, error) { return "", nil }
-func (emptyStringTuples) Len() int                 { return 0 }
 
 // Series reads the series with the given ID and writes its labels and chunks into lbls and chks.
 func (r *Reader) Series(id uint64, lbls *labels.Labels, chks *[]chunks.Meta) error {
@@ -1552,27 +1539,6 @@ func (r *Reader) LabelNames() ([]string, error) {
 	}
 	sort.Strings(labelNames)
 	return labelNames, nil
-}
-
-type stringTuples struct {
-	entries []string // flattened tuple entries
-}
-
-func NewStringTuples(entries []string) (*stringTuples, error) {
-	return &stringTuples{
-		entries: entries,
-	}, nil
-}
-
-func (t *stringTuples) Len() int                 { return len(t.entries) }
-func (t *stringTuples) At(i int) (string, error) { return t.entries[i], nil }
-
-func (t *stringTuples) Swap(i, j int) {
-	t.entries[i], t.entries[j] = t.entries[j], t.entries[i]
-}
-
-func (t *stringTuples) Less(i, j int) bool {
-	return t.entries[i] < t.entries[j]
 }
 
 // NewStringListIterator returns a StringIter for the given sorted list of strings.
