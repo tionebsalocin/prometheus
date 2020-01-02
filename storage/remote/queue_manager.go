@@ -581,6 +581,12 @@ func (t *QueueManager) calculateDesiredShards() int {
 	}
 
 	numShards := int(math.Ceil(desiredShards))
+	// Do not downshard if we are more than ten seconds back.
+	if numShards < t.numShards && samplesPending > 10.0*samplesInRate {
+		level.Debug(t.logger).Log("msg", "Not downsharding due to being too far behind")
+		return t.numShards
+	}
+
 	if numShards > t.cfg.MaxShards {
 		numShards = t.cfg.MaxShards
 	} else if numShards < t.cfg.MinShards {
