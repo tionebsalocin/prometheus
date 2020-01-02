@@ -582,7 +582,7 @@ func TestCalculateDesiredShards(t *testing.T) {
 	c := NewTestStorageClient()
 	cfg := config.DefaultQueueConfig
 
-	dir, err := ioutil.TempDir("", "TestSampleDeliver")
+	dir, err := ioutil.TempDir("", "TestCalculateDesiredShards")
 	testutil.Ok(t, err)
 	defer os.RemoveAll(dir)
 
@@ -596,10 +596,13 @@ func TestCalculateDesiredShards(t *testing.T) {
 	m.Stop()
 
 	inputRate := int64(50000)
+	var pendingSamples int64
 
 	// Two minute startup, no samples are sent.
 	for ts := time.Duration(0); ts < 120*time.Second; ts += shardUpdateDuration {
-		samplesIn.incr(inputRate * int64(shardUpdateDuration/time.Second))
+		s := inputRate * int64(shardUpdateDuration/time.Second)
+		pendingSamples += s
+		samplesIn.incr(s)
 		samplesIn.tick()
 		m.numShards = m.calculateDesiredShards()
 		testutil.Equals(t, 1, m.numShards)
@@ -608,14 +611,29 @@ func TestCalculateDesiredShards(t *testing.T) {
 	// Assume 100ms per request, or 10 requests per second per shard.
 	// Shard calculation should never drop below barely keeping up.
 	minShards := int(inputRate) / cfg.MaxSamplesPerSend / 10
+	// This test should never go above 200 shards, that would be more resources than needed.
+	maxShards := 200
+
 	for ts := time.Duration(0); ts < 10*time.Minute; ts += shardUpdateDuration {
-		samplesIn.incr(inputRate * int64(shardUpdateDuration/time.Second))
+		sin := inputRate * int64(shardUpdateDuration/time.Second)
+		pendingSamples += sin
+		samplesIn.incr(sin)
 		samplesIn.tick()
-		m.samplesOut.incr(int64(m.numShards*cfg.MaxSamplesPerSend) * int64(shardUpdateDuration/(100*time.Millisecond)))
+
+		sout := int64(m.numShards*cfg.MaxSamplesPerSend) * int64(shardUpdateDuration/(100*time.Millisecond))
+		// You can't send samples that don't exist so cap at the number of pending samples.
+		if sout > pendingSamples {
+			sout = pendingSamples
+		}
+		pendingSamples -= sout
+		m.samplesOut.incr(sout)
 		m.samplesOutDuration.incr(int64(m.numShards) * int64(shardUpdateDuration))
 		atomic.StoreInt64(&m.lastSendTimestamp, time.Now().Unix())
 
+		t.Log("desiredShards", m.numShards, "pendingSamples", pendingSamples)
 		m.numShards = m.calculateDesiredShards()
 		testutil.Assert(t, m.numShards >= minShards, "Shards are too low. desiredShards=%d, minShards=%d, t_seconds=%d", m.numShards, minShards, ts/time.Second)
+		testutil.Assert(t, m.numShards <= maxShards, "Shards are too high. desiredShards=%d, maxShards=%d, t_seconds=%d", m.numShards, maxShards, ts/time.Second)
 	}
+	testutil.Assert(t, pendingSamples == 0, "Remote write never caught up, there are still %d pending samples.", pendingSamples)
 }

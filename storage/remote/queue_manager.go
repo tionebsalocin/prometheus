@@ -524,13 +524,18 @@ func (t *QueueManager) calculateDesiredShards() int {
 		samplesKeptRatio   = samplesOutRate / (t.samplesDropped.rate() + samplesOutRate)
 		samplesOutDuration = t.samplesOutDuration.rate() / float64(time.Second)
 		samplesPendingRate = samplesInRate*samplesKeptRatio - samplesOutRate
-		highestSent        = t.highestSentTimestampMetric.Get()
-		highestRecv        = highestTimestamp.Get()
-		samplesPending     = (highestRecv - highestSent) * samplesInRate * samplesKeptRatio
+		samplesPending     = float64(t.samplesIn.count()-t.samplesOut.count()-t.samplesDropped.count()) * samplesKeptRatio
 	)
 
 	if samplesOutRate <= 0 {
 		return t.numShards
+	}
+
+	// Due to the timing of ticks it is possible for samplesIn to be less than
+	// samplesOut, leading to a negative samplesPending. In reality, this just
+	// means we are caught up so zero the value.
+	if samplesPending < 0 {
+		samplesPending = 0
 	}
 
 	// We shouldn't reshard if Prometheus hasn't been able to send to the
@@ -544,8 +549,9 @@ func (t *QueueManager) calculateDesiredShards() int {
 
 	// When behind we will try to catch up on a proporation of samples per tick.
 	// This works similarly to an integral accumulator in that pending samples
-	// is the result of the error integral.
-	const integralGain = 0.2 / float64(shardUpdateDuration/time.Second)
+	// is the result of the error integral. This effectively means try to catch
+	// up on all pending samples within the next 10 cycles (100 seconds).
+	const integralGain = 0.1 / float64(shardUpdateDuration/time.Second)
 
 	var (
 		timePerSample = samplesOutDuration / samplesOutRate
@@ -561,8 +567,6 @@ func (t *QueueManager) calculateDesiredShards() int {
 		"samplesOutDuration", samplesOutDuration,
 		"timePerSample", timePerSample,
 		"desiredShards", desiredShards,
-		"highestSent", highestSent,
-		"highestRecv", highestRecv,
 	)
 
 	// Changes in the number of shards must be greater than shardToleranceFraction.
